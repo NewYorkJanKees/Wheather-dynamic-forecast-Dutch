@@ -463,22 +463,21 @@
         if([95,96,99].includes(code)) return "Zwaar Onweer"; return "Wisselvallig";
     }
 
-    // HELPER FUNCTIE: Vindt het eerstvolgende uur met échte neerslag (> 0.05mm of onweer)
-    function vindEerstvolgendeNeerslagUur(data, huidigUur) {
+    function vindEerstvolgendeNeerslagUur(data, startIndex) {
         var alleNeerslagCodes = [51,53,55,56,57,61,63,65,66,67,71,73,75,77,80,81,82,85,86,95,96,99];
         
-        for (var i = huidigUur; i < huidigUur + 12; i++) {
-            if (!data.hourly.weather_code[i]) break;
+        for (var i = startIndex; i < startIndex + 12; i++) {
+            if (!data.hourly.time[i]) break;
             
             var cCode = data.hourly.weather_code[i];
             var cKans = data.hourly.precipitation_probability[i];
             var cMm = data.hourly.precipitation[i] || 0;
+            var cKlokUur = new Date(data.hourly.time[i]).getHours();
             
-            // We tellen het mee als het onweert óf als er echt water valt bij een redelijke kans
-            if ([95,96,99].includes(cCode) || (alleNeerslagCodes.includes(cCode) && cMm > 0.05 && (i === huidigUur || cKans > 30))) {
+            if ([95,96,99].includes(cCode) || (alleNeerslagCodes.includes(cCode) && cMm > 0.05 && (i === startIndex || cKans > 30))) {
                 return {
                     index: i,
-                    klokUur: i % 24,
+                    klokUur: cKlokUur,
                     code: cCode,
                     mm: cMm,
                     kans: cKans,
@@ -489,11 +488,11 @@
         return null;
     }
 
-    function berekenDirecteRegenkans(data, huidigUur) {
-        var neerslagUur = vindEerstvolgendeNeerslagUur(data, huidigUur);
+    function berekenDirecteRegenkans(data, startIndex) {
+        var neerslagUur = vindEerstvolgendeNeerslagUur(data, startIndex);
         
         if (neerslagUur) {
-            if (neerslagUur.index === huidigUur) {
+            if (neerslagUur.index === startIndex) {
                 return neerslagUur.typeInfo.emoji + " Nu direct al " + neerslagUur.typeInfo.type + " (" + neerslagUur.mm.toFixed(1) + " mm)";
             } else {
                 return neerslagUur.typeInfo.emoji + " Eerste " + neerslagUur.typeInfo.type + " verwacht rond " + neerslagUur.klokUur + ":00 uur (" + neerslagUur.mm.toFixed(1) + " mm)";
@@ -502,23 +501,21 @@
         return "✨ Komende 8 uur lekker droog!";
     }
 
-    // GESYNCHRONISEERD: Gebruikt exact dezelfde detectie-methode als het blauwe blok bovenin
-    function bouwSlimmeDagPlanner(data, huidigUur) {
+    function bouwSlimmeDagPlanner(data, startIndex) {
         var plannerBox = document.getElementById('dagPlannerAdvies');
-        var neerslagUur = vindEerstvolgendeNeerslagUur(data, huidigUur);
+        var neerslagUur = vindEerstvolgendeNeerslagUur(data, startIndex);
 
-        // Als er nu direct al regen valt
-        if (neerslagUur && neerslagUur.index === huidigUur) {
-            // Zoek wanneer het weer droog wordt
+        if (neerslagUur && neerslagUur.index === startIndex) {
             var droogUur = -1;
             var alleNeerslagCodes = [51,53,55,56,57,61,63,65,66,67,71,73,75,77,80,81,82,85,86,95,96,99];
             
-            for(var i = huidigUur + 1; i < huidigUur + 12; i++) {
-                if(!data.hourly.weather_code[i]) break;
+            for(var i = startIndex + 1; i < startIndex + 12; i++) {
+                if(!data.hourly.time[i]) break;
                 var cCode = data.hourly.weather_code[i];
                 var cMm = data.hourly.precipitation[i] || 0;
+                var cKlokUur = new Date(data.hourly.time[i]).getHours();
                 if(!alleNeerslagCodes.includes(cCode) || cMm <= 0.05) {
-                    droogUur = i % 24;
+                    droogUur = cKlokUur;
                     break;
                 }
             }
@@ -529,11 +526,9 @@
                 plannerBox.innerHTML = "🌧️ <b>Kies voor binnen-activiteiten.</b> Het blijft de komende uren helaas nat met risico op " + neerslagUur.typeInfo.type + ".";
             }
         } 
-        // Als het nu droog is, maar later gaat regenen
         else if (neerslagUur) {
             plannerBox.innerHTML = "💡 <b>Nu op pad gaan!</b> Het is momenteel lekker droog bij jou. Maar let op: rond <b>" + neerslagUur.klokUur + ":00 uur</b> kan er wat <b>" + neerslagUur.typeInfo.type + "</b> vallen.";
         } 
-        // Als het de hele middag droog blijft
         else {
             plannerBox.innerHTML = "✨ <b>Hele middag stabiel droog!</b> Modellen geven wel kansen op bewolking/spatjes, maar er valt geen noemenswaardige neerslag. Lekker naar buiten!";
         }
@@ -547,32 +542,42 @@
             document.getElementById('weerDashboard').style.display = 'block';
             document.getElementById('weerLocatie').innerText = naam;
             
-            var nu = new Date(); var urenNu = nu.getHours();
-            var opties = { weekday: 'short', day: 'numeric', month: 'short' };
-            document.getElementById('weerTijd').innerText = nu.toLocaleDateString('nl-NL', opties) + " | Update: " + nu.toLocaleTimeString('nl-NL', {hour:'2-digit', minute:'2-digit'});
+            // GEFIXTE TIJDZONE LOGICA: We zoeken de index in de data die MATCHT met de lokale tijd van de locatie
+            var nuInGekozenTijdzone = new Date(new Date().toLocaleString("en-US", {timeZone: data.timezone}));
+            var urenNuGekozenTijdzone = nuInGekozenTijdzone.getHours();
             
+            // Vind de index van het huidige uur in de hourly.time array
+            var startIndex = 0;
+            var nuISOStringStr = data.daily.time[0] + "T" + String(urenNuGekozenTijdzone).padStart(2, '0') + ":00";
+            for(var i=0; i<data.hourly.time.length; i++) {
+                if(data.hourly.time[i].substring(0,13) === nuISOStringStr.substring(0,13)) {
+                    startIndex = i;
+                    break;
+                }
+            }
+
             var maxT = data.daily.temperature_2m_max[0];
             var kansT = data.daily.precipitation_probability_max[0];
             var codeT = data.current.weather_code;
             var windT = data.current.wind_speed_10m;
-            var nuMm = data.hourly.precipitation[urenNu] || 0;
+            var nuMm = data.hourly.precipitation[startIndex] || 0;
 
             berekenGeoWeging(lat, lon, codeT);
 
-            if(urenNu >= new Date(data.daily.sunset[0]).getHours() || urenNu < 6) document.body.classList.add('dark-mode');
+            var zonsondergangUur = new Date(data.daily.sunset[0]).getHours();
+            if(urenNuGekozenTijdzone >= zonsondergangUur || urenNuGekozenTijdzone < 6) document.body.classList.add('dark-mode');
             else document.body.classList.remove('dark-mode');
 
-            berekenHuidigUurIndex(data.current.temperature_2m, data.hourly.precipitation_probability[urenNu], windT, codeT, nuMm);
+            berekenHuidigUurIndex(data.current.temperature_2m, data.hourly.precipitation_probability[startIndex], windT, codeT, nuMm);
             
-            // Beide functies worden nu direct na elkaar uitgevoerd met exact dezelfde uur-data logic
-            document.getElementById('heroImmediateRain').innerText = berekenDirecteRegenkans(data, urenNu);
-            bouwSlimmeDagPlanner(data, urenNu);
+            document.getElementById('heroImmediateRain').innerText = berekenDirecteRegenkans(data, startIndex);
+            bouwSlimmeDagPlanner(data, startIndex);
             
             haalExtraMilieuData(lat, lon);
 
             document.getElementById('heroTemp').innerText = Math.round(data.current.temperature_2m) + "°C";
             document.getElementById('heroWeatherIcon').innerText = geefSimpelIcoontje(codeT);
-            document.getElementById('heroLiveTimeText').innerText = nu.toLocaleTimeString('nl-NL', {hour:'2-digit', minute:'2-digit'});
+            document.getElementById('heroLiveTimeText').innerText = String(urenNuGekozenTijdzone).padStart(2, '0') + ":" + String(nuInGekozenTijdzone.getMinutes()).padStart(2, '0');
             document.getElementById('heroStatusText').innerText = geefStatusTekst(codeT);
 
             document.getElementById('vandaagMinMax').innerText = data.daily.temperature_2m_min[0] + "°C / " + maxT + "°C";
@@ -586,16 +591,19 @@
             else if(kansT > 40 && data.current.temperature_2m > 19) onweerPercentage = "40% (Broeierig)";
             document.getElementById('vandaagOnweer').innerText = onweerPercentage;
 
+            // GEFIXTE URENBALK: We loopen nu altijd 24 uur vanaf de startIndex van de lokale locatie
             var sb = document.getElementById('uurScrollBalk'); sb.innerHTML = '';
-            for(var h = urenNu; h < urenNu + 24; h++) {
-                if(!data.hourly.weather_code[h]) break;
+            for(var h = startIndex; h < startIndex + 24; h++) {
+                if(!data.hourly.time[h]) break;
                 var item = document.createElement('div'); item.className = 'hourly-item';
-                var uCode = data.hourly.weather_code[h]; var uKans = data.hourly.precipitation_probability[h];
+                var uCode = data.hourly.weather_code[h]; 
+                var uKans = data.hourly.precipitation_probability[h];
                 var uMm = data.hourly.precipitation[h] || 0;
+                var lUur = new Date(data.hourly.time[h]).getHours();
                 
                 var weergaveIcoon = (uMm > 0.05) ? geefSimpelIcoontje(uCode) : (uKans > 50 ? "☁️" : "🌤️");
                 
-                item.innerHTML = '<div class="time">' + (h % 24) + ':00</div>' +
+                item.innerHTML = '<div class="time">' + lUur + ':00</div>' +
                                  '<div class="icon">' + weergaveIcoon + '</div>' +
                                  '<div class="temp">' + Math.round(data.hourly.temperature_2m[h]) + '°</div>' +
                                  '<div class="chance">' + (uMm > 0 ? '💧 ' + uMm.toFixed(1) + 'm' : '☁️ ' + uKans + '%') + '</div>';

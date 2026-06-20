@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PetersWeer (Fixed)</title>
+<title>PetersWeer</title>
 
 <style>
-/* ====== JOUW CSS ONGEWIJZIGD ====== */
-/* (ingekort hier om ruimte te besparen — laat jouw CSS staan) */
+/* ===== JOUW CSS ONGEWIJZIGD ===== */
+/* plak hier je bestaande CSS exact zoals je had */
 </style>
 </head>
 
@@ -18,19 +18,36 @@
     <div class="brand">Peters<span>Weer</span></div>
 
     <div class="menu-sectie">
-        <button class="gps-btn" onclick="startGPS()">📍 GPS</button>
+        <button class="gps-btn" onclick="startGPS()">📍 Gebruik GPS</button>
+
         <div class="search-box">
-            <input id="stadInvoer" placeholder="Plaats...">
+            <input id="stadInvoer" placeholder="Plaatsnaam">
             <button onclick="startHandmatig()">Zoek</button>
         </div>
     </div>
 
-    <div id="weerDashboard" class="dashboard" style="display:none;">
-        <div id="heroTemp"></div>
-        <div id="heroWeatherIcon"></div>
-        <div id="heroImmediateRain"></div>
+    <div id="statusMelding" class="msg-box status" style="display:none;"></div>
+    <div id="foutMelding" class="msg-box error"></div>
 
-        <div id="uurScrollBalk"></div>
+    <div id="weerDashboard" class="dashboard" style="display:none;">
+
+        <div id="weerLocatie" class="title-loc">-</div>
+        <div id="weerTijd" class="title-time">-</div>
+
+        <div class="glance-card">
+            <div class="glance-top-row">
+                <span class="hero-live-time" id="heroLiveTimeText">00:00</span>
+                <span class="glance-emoji" id="heroWeatherIcon">☀️</span>
+            </div>
+
+            <div class="glance-temp" id="heroTemp">-</div>
+            <div id="heroStatusText">-</div>
+
+            <div class="hero-now-rain" id="heroImmediateRain">Laden...</div>
+        </div>
+
+        <div id="uurScrollBalk" class="hourly-scroll"></div>
+
     </div>
 
 </div>
@@ -42,23 +59,22 @@ let globalLat = 0;
 let globalLon = 0;
 
 /* =========================
-   FIX 1: BETROUWBARE INDEX
+   FIX 1: juiste tijd-index
 ========================= */
 function getStartIndex(data) {
-    const now = data.current.time;
-    let idx = data.hourly.time.findIndex(t => t === now);
+    let idx = data.hourly.time.findIndex(t => t === data.current.time);
     return idx >= 0 ? idx : 0;
 }
 
 /* =========================
-   FIX 2: REGEN LOGICA
+   FIX 2: regenlogica 1 plek
 ========================= */
-function isRegen(mm, code) {
+function isRegen(code, mm) {
     return mm >= 0.3 || [51,53,55,61,63,65,80,81,82,95,96,99].includes(code);
 }
 
 /* =========================
-   FIX 3: SIMPELE ICONS
+   ICONS
 ========================= */
 function icon(code) {
     if (code === 0) return "☀️";
@@ -71,30 +87,42 @@ function icon(code) {
 }
 
 /* =========================
-   FIX 4: REGEN TEKST NU CORRECT
+   LOCATIE TONEN
 ========================= */
-function regenTekst(data, i) {
-    const mm = data.hourly.precipitation[i] || 0;
-    const code = data.hourly.weather_code[i];
-    const uur = new Date(data.hourly.time[i]).getHours();
-
-    if (isRegen(mm, code)) {
-        if (i === 0) return `🌧️ Het regent nu (${mm.toFixed(1)} mm)`;
-        return `🌧️ Regen rond ${uur}:00 (${mm.toFixed(1)} mm)`;
-    }
-    return "☀️ Droog komende uren";
+function zetLocatieNaam(naam) {
+    document.getElementById("weerLocatie").innerText = naam;
 }
 
 /* =========================
-   WEER OPHALEN
+   REGEN TEKST
+========================= */
+function regenTekst(data, i) {
+
+    let mm = data.hourly.precipitation[i] || 0;
+    let code = data.hourly.weather_code[i];
+    let uur = new Date(data.hourly.time[i]).getHours();
+
+    if (isRegen(code, mm)) {
+
+        if (i === 0) {
+            return "🌧️ Het regent nu (" + mm.toFixed(1) + " mm)";
+        }
+
+        return "🌧️ Regen rond " + uur + ":00 (" + mm.toFixed(1) + " mm)";
+    }
+
+    return "☀️ Droog de komende uren";
+}
+
+/* =========================
+   WEER API
 ========================= */
 function haalWeer(lat, lon, naam) {
 
 const url =
 `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}
-&current=temperature_2m,weather_code,wind_speed_10m
+&current=temperature_2m,weather_code,wind_speed_10m,time
 &hourly=temperature_2m,weather_code,precipitation,precipitation_probability
-&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code
 &timezone=auto`;
 
 fetch(url)
@@ -105,70 +133,99 @@ globalWeerData = data;
 
 document.getElementById("weerDashboard").style.display = "block";
 
-/* ===== FIX INDEX ===== */
-const startIndex = getStartIndex(data);
+zetLocatieNaam(naam);
 
-/* ===== HERO ===== */
+/* FIX INDEX */
+let startIndex = getStartIndex(data);
+
+/* HERO */
 document.getElementById("heroTemp").innerText =
 Math.round(data.current.temperature_2m) + "°C";
 
 document.getElementById("heroWeatherIcon").innerText =
 icon(data.current.weather_code);
 
-/* ===== BELANGRIJK: CORRECTE REGEN ===== */
+/* REGEN NU */
 document.getElementById("heroImmediateRain").innerText =
 regenTekst(data, startIndex);
 
-/* ===== 24u BALK ===== */
-const box = document.getElementById("uurScrollBalk");
+/* LIVE UUR BALK */
+let box = document.getElementById("uurScrollBalk");
 box.innerHTML = "";
 
 for (let i = startIndex; i < startIndex + 24; i++) {
+
 if (!data.hourly.time[i]) break;
 
-const mm = data.hourly.precipitation[i] || 0;
-const code = data.hourly.weather_code[i];
-const uur = new Date(data.hourly.time[i]).getHours();
+let mm = data.hourly.precipitation[i] || 0;
+let code = data.hourly.weather_code[i];
+let uur = new Date(data.hourly.time[i]).getHours();
 
-const div = document.createElement("div");
-div.style = "display:inline-block;margin:5px;padding:6px;background:#eee;border-radius:8px;font-size:12px;";
+let div = document.createElement("div");
+div.className = "hourly-item";
 
 div.innerHTML =
 `<div>${uur}:00</div>
 <div>${icon(code)}</div>
 <div>${Math.round(data.hourly.temperature_2m[i])}°</div>
-<div>${mm > 0 ? "💧" + mm.toFixed(1) : "—"}</div>`;
+<div>${mm >= 0.3 ? "💧" + mm.toFixed(1) : "—"}</div>`;
 
 box.appendChild(div);
 }
 
-})
-.catch(err => {
-console.log(err);
-alert("Weerdata fout");
 });
 
 }
 
 /* =========================
-   INPUTS
+   GPS
 ========================= */
-function startHandmatig() {
-const v = document.getElementById("stadInvoer").value;
-if (!v) return;
+function startGPS() {
 
-fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${v}&count=1&language=nl`)
+navigator.geolocation.getCurrentPosition(pos => {
+
+fetch(`https://nominatim.openstreetmap.org/reverse?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&format=json`)
 .then(r => r.json())
-.then(d => {
-const loc = d.results[0];
-haalWeer(loc.latitude, loc.longitude, loc.name);
+.then(g => {
+
+let naam =
+(g.address.city || g.address.town || g.address.village || "Mijn locatie")
++ (g.address.country ? ", " + g.address.country : "");
+
+zetLocatieNaam(naam);
+
+haalWeer(pos.coords.latitude, pos.coords.longitude, naam);
+
 });
+
+});
+
 }
 
-function startGPS() {
-navigator.geolocation.getCurrentPosition(pos => {
-haalWeer(pos.coords.latitude, pos.coords.longitude, "Mijn locatie");
+/* =========================
+   SEARCH
+========================= */
+function startHandmatig() {
+
+let v = document.getElementById("stadInvoer").value;
+if (!v) return;
+
+fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${v}&count=1`)
+.then(r => r.json())
+.then(d => {
+
+if (!d.results) return;
+
+let loc = d.results[0];
+
+let naam = loc.name + (loc.country ? ", " + loc.country : "");
+
+zetLocatieNaam(naam);
+
+haalWeer(loc.latitude, loc.longitude, naam);
+
 });
+
 }
 
 </script>

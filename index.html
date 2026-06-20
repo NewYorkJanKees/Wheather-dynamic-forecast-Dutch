@@ -3,186 +3,154 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Weer</title>
+<title>PetersWeer FIX</title>
 
 <style>
-body { margin:0; font-family:Arial; background:#f2f2f2; }
-.wrapper { max-width:520px; margin:auto; background:white; padding:12px; }
-
-.top { text-align:center; font-weight:bold; font-size:20px; }
-.loc { text-align:center; color:#555; margin-bottom:10px; }
-
-.hero { background:linear-gradient(#cfe8ff,#eaf4ff); padding:15px; border-radius:12px; text-align:center; }
-.temp { font-size:42px; font-weight:bold; }
-.icon { font-size:30px; }
-
-input, button { width:100%; padding:10px; margin-top:6px; border-radius:8px; border:none; }
-.gps { background:#2ecc71; color:white; }
-.search { background:#3498db; color:white; color:white; }
-
-.hourly { display:flex; overflow-x:auto; gap:8px; margin-top:10px; }
-.card { min-width:70px; background:#eee; padding:8px; border-radius:8px; text-align:center; }
+body{font-family:Arial;margin:0;background:#f0f2f5;color:#111}
+.wrapper{max-width:460px;margin:auto;background:#fff;padding:16px;border-radius:16px}
+.brand{text-align:center;font-weight:800;font-size:22px}
+.hero{background:linear-gradient(135deg,#dbeafe,#bfdbfe);padding:14px;border-radius:12px;text-align:center;margin-top:10px}
+.temp{font-size:42px;font-weight:800}
+.small{font-size:12px;color:#444}
+.hourly{display:flex;gap:8px;overflow-x:auto;margin-top:10px}
+.hour{min-width:60px;background:#eee;border-radius:8px;padding:6px;text-align:center}
+.error{color:red;font-weight:bold;text-align:center}
+.btn{width:100%;padding:10px;margin-top:6px}
 </style>
-
 </head>
 
 <body>
-
 <div class="wrapper">
 
-<div class="top">Weer App</div>
-<div class="loc" id="plaats">Geen locatie</div>
+<div class="brand">PetersWeer</div>
 
-<button class="gps" onclick="gps()">📍 GPS</button>
+<div id="locatie" class="small">Geen locatie</div>
 
+<button class="btn" onclick="gps()">📍 GPS</button>
 <input id="input" placeholder="Plaats">
-<button class="search" onclick="zoek()">Zoek</button>
+<button class="btn" onclick="zoek()">Zoek</button>
+
+<div id="error" class="error"></div>
+
+<div id="dashboard" style="display:none">
 
 <div class="hero">
-<div class="icon" id="icoon">☀️</div>
+<div id="plaatsnaam"></div>
+<div id="tijd" class="small"></div>
 <div class="temp" id="temp">-</div>
 <div id="status">-</div>
 <div id="regen">-</div>
 </div>
 
-<div class="hourly" id="uren"></div>
+<div class="hourly" id="hours"></div>
+
+</div>
 
 </div>
 
 <script>
 
-let lat, lon;
+let lat=0, lon=0;
+let plaats="";
 
-/* ------------------ LOCATIE (100% consistent) ------------------ */
-
-function setPlaats(name){
-if(!name) name = "Onbekend";
-document.getElementById("plaats").innerText = name;
-localStorage.setItem("plaats", name);
-}
-
-/* ------------------ GPS ------------------ */
+function err(t){document.getElementById("error").innerText=t;}
 
 function gps(){
 navigator.geolocation.getCurrentPosition(async p=>{
-lat = p.coords.latitude;
-lon = p.coords.longitude;
+lat=p.coords.latitude;
+lon=p.coords.longitude;
 
-let geo = await fetch(
-`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`
-).then(r=>r.json());
+let geo=await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`).then(r=>r.json());
 
-let naam =
-geo.address.city ||
-geo.address.town ||
-geo.address.village ||
-geo.address.municipality ||
-"Mijn locatie";
+plaats = geo.address.city || geo.address.town || geo.address.village || "Mijn locatie";
 
-setPlaats(naam + ", " + (geo.address.country || ""));
-
-haalWeer();
+loadWeather();
 });
 }
-
-/* ------------------ SEARCH ------------------ */
 
 function zoek(){
-let q = document.getElementById("input").value;
-if(!q) return;
+let q=document.getElementById("input").value;
+if(!q) return err("Typ iets");
 
-fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${q}&count=1&language=nl`)
+fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${q}&count=1`)
 .then(r=>r.json())
 .then(d=>{
-if(!d.results || !d.results.length){
-setPlaats("Niet gevonden");
-return;
-}
+if(!d.results) return err("Niet gevonden");
 
-lat = d.results[0].latitude;
-lon = d.results[0].longitude;
+lat=d.results[0].latitude;
+lon=d.results[0].longitude;
+plaats=d.results[0].name + ", " + (d.results[0].country||"");
 
-setPlaats(d.results[0].name + ", " + d.results[0].country);
-
-haalWeer();
+loadWeather();
 });
 }
 
-/* ------------------ ICONEN ------------------ */
-
-function icoon(code){
-if(code === 0) return "☀️";
-if(code <= 2) return "🌤️";
-if(code === 3) return "☁️";
-if(code >= 61 && code <= 82) return "🌧️";
-if(code >= 95) return "⛈️";
-return "❓";
+function isRain(code,mm,ch){
+const r=[51,53,55,61,63,65,80,81,82,95,96,99];
+return r.includes(code)||mm>0.1||ch>60;
 }
 
-/* ------------------ REGEN LOGICA (BETROUWBAAR) ------------------ */
-
-function isRegen(code, mm, kans){
-if(code >= 95) return true;
-if(mm > 0.25) return true;
-if(kans > 60) return true;
-return false;
+function regenText(code,mm,ch){
+if(isRain(code,mm,ch)) return "🌧️ Regen";
+return "☀️ Droog";
 }
 
-/* ------------------ WEER ------------------ */
+async function loadWeather(){
 
-function haalWeer(){
-fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code,precipitation,precipitation_probability&timezone=auto`)
-.then(r=>r.json())
-.then(d=>{
+document.getElementById("dashboard").style.display="block";
+document.getElementById("plaatsnaam").innerText=plaats;
+document.getElementById("locatie").innerText=plaats;
 
-document.getElementById("temp").innerText =
-Math.round(d.current.temperature_2m) + "°C";
+let url=`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code,precipitation,precipitation_probability&timezone=auto`;
 
-document.getElementById("icoon").innerText =
-icoon(d.current.weather_code);
+let data=await fetch(url).then(r=>r.json());
 
-document.getElementById("status").innerText =
-(d.current.weather_code >= 61 ? "Onstabiel / Regen" : "Droog");
+let now=new Date();
+let uur=now.getHours();
 
-/* 🔥 BELANGRIJK: juiste “nu” index */
-let now = new Date().getHours();
-let i = d.hourly.time.findIndex(t => new Date(t).getHours() === now);
-if(i < 0) i = 0;
-
-let mm = d.hourly.precipitation[i];
-let kans = d.hourly.precipitation_probability[i];
-
-document.getElementById("regen").innerText =
-isRegen(d.current.weather_code, mm, kans)
-? "🌧️ Kans op regen"
-: "☀️ Droog";
-
-/* uur balk */
-let uren = document.getElementById("uren");
-uren.innerHTML = "";
-
-for(let x=0; x<24; x++){
-let code = d.hourly.weather_code[x];
-let mm2 = d.hourly.precipitation[x];
-let kans2 = d.hourly.precipitation_probability[x];
-
-uren.innerHTML += `
-<div class="card">
-<div>${icoon(code)}</div>
-<div>${Math.round(d.hourly.temperature_2m[x])}°</div>
-<div>${isRegen(code, mm2, kans2) ? "💧" : "☀️"}</div>
-</div>`;
+let start=0;
+for(let i=0;i<data.hourly.time.length;i++){
+if(new Date(data.hourly.time[i]).getHours()===uur){
+start=i;
+break;
+}
 }
 
-});
+let temp=Math.round(data.current.temperature_2m);
+let code=data.current.weather_code;
+
+let mm=data.hourly.precipitation[start]||0;
+let ch=data.hourly.precipitation_probability[start]||0;
+
+document.getElementById("temp").innerText=temp+"°C";
+document.getElementById("status").innerText=code;
+document.getElementById("tijd").innerText=uur+":00";
+document.getElementById("regen").innerText=regenText(code,mm,ch);
+
+let h=document.getElementById("hours");
+h.innerHTML="";
+
+for(let i=start;i<start+24;i++){
+if(!data.hourly.time[i]) break;
+
+let t=new Date(data.hourly.time[i]).getHours();
+let mm2=data.hourly.precipitation[i]||0;
+let ch2=data.hourly.precipitation_probability[i]||0;
+let c=data.hourly.weather_code[i];
+
+let div=document.createElement("div");
+div.className="hour";
+
+div.innerHTML=`
+<div>${String(t).padStart(2,'0')}:00</div>
+<div>${isRain(c,mm2,ch2)?"🌧️":"☀️"}</div>
+<div>${Math.round(data.hourly.temperature_2m[i])}°</div>
+`;
+
+h.appendChild(div);
 }
 
-/* ------------------ INIT ------------------ */
-
-window.onload = () => {
-let saved = localStorage.getItem("plaats");
-if(saved) setPlaats(saved);
-};
+}
 
 </script>
 
